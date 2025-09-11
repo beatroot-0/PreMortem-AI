@@ -17,10 +17,10 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-input_dir  = r"C:\Users\gamin\OneDrive\Documents\shit\python\hackathon\datasets\master-10k"
-output_dir = r"C:\Users\gamin\OneDrive\Documents\shit\python\hackathon\datasets\json-10k"
+input_dir  = "all 10k pdfs from the banks must be in the same directory"
+output_dir = "the script will save the embeddings in npy files and completely processed jsonl including the built-in embeddings "
 EMBEDDINGS_DIR = os.path.join(output_dir, "embeddings")
-OUTPUT_JSON_PATH = os.path.join(output_dir, "10k_analysis.jsonl")
+OUTPUT_JSONL_PATH = os.path.join(output_dir, "10k_analysis.jsonl")
 
 SENTIMENT_MODEL_NAME = "ProsusAI/finbert"
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
@@ -213,11 +213,11 @@ def main():
             all_results.append(result_row)
 
     if not all_results:
-        logging.warning("No data was processed the output .json file will not be created")
+        logging.warning("No data was processed the output .jsonl file will not be created")
         return
 
-    logging.info(f"Aggregating and saving results to {OUTPUT_JSON_PATH}...")
-    with open(OUTPUT_JSON_PATH, 'w', encoding='utf-8') as f:
+    logging.info(f"Aggregating and saving results to {OUTPUT_JSONL_PATH}...")
+    with open(OUTPUT_JSONL_PATH, 'w', encoding='utf-8') as f:
         json.dump(all_results, f, ensure_ascii=False, indent=4)
 
     logging.info("--- Script finished successfully! ---")
