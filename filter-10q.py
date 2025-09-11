@@ -14,8 +14,8 @@ from sentence_transformers import SentenceTransformer
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-INPUT_DIR = r"C:\Users\gamin\OneDrive\Documents\shit\python\hackathon\datasets\master-10q"
-OUTPUT_DIR = r"C:\Users\gamin\OneDrive\Documents\shit\python\hackathon\datasets\json-10q"
+INPUT_DIR = "all the pdfs from banks must lie in the same directory"
+OUTPUT_DIR = "output directory will process the embeddings in npy files and the jsonl files seperately into the same directory"
 
 FINBERT_MODEL = "ProsusAI/finbert"
 EMBED_MODEL = "sentence-transformers/all-mpnet-base-v2"
@@ -288,7 +288,7 @@ def main() -> None:
                 row_id_counter += 1
     if master_rows:
         master_json_path = os.path.join(OUTPUT_DIR, 'master_10q_analysis.jsonl')
-        logging.info(f"Pipeline complete. Master JSON saved to {master_json_path}")
+        logging.info(f"Pipeline complete. Master JSONL saved to {master_json_path}")
         with open(master_json_path, 'w', encoding='utf-8') as f:
             json.dump(master_rows, f, indent=4)
     else:
