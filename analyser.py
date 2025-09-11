@@ -9,7 +9,7 @@ import numpy as np
 
 auth.authenticate_user()
 print('Authenticated')
-project_id = 'hackathon-471014'
+project_id = 'your-gcp-project-id' # add your google cloud project id
 client = bigquery.Client(project=project_id)
 
 # --- analyser the datas ---
@@ -25,9 +25,7 @@ class FinancialCrisisAnalyzer:
         }
 
     def analyze_stock_trends(self, bank_code, start_date='2006-01-01', end_date='2009-12-31'):
-        """
-        analyze stock trends and identify anomalies
-        """
+        
         query = f"""
         SELECT
             date_field_0 as date,
@@ -42,9 +40,7 @@ class FinancialCrisisAnalyzer:
         return self.client.query(query).to_dataframe()
 
     def analyze_sentiment_trends(self, filing_type, bank_code, start_year=2006, end_year=2009):
-        """
-        analyze sentiment trends in sec filings
-        """
+        
         filing_bank_code = 'boa' if bank_code == 'bac' else bank_code
 
         if filing_type == '10k':
@@ -55,7 +51,7 @@ class FinancialCrisisAnalyzer:
                 AVG(sentiment_positive) as avg_positive_sentiment,
                 COUNT(*) as total_chunks,
                 SUM(CASE WHEN sentiment_negative > 0.7 THEN 1 ELSE 0 END) as high_negative_count
-            FROM `hackathon.{filing_type}`
+            FROM `your_filings_dataset.{filing_type}` # add your bigquery dataset name for filings
             WHERE bank = '{filing_bank_code}'
             AND year BETWEEN {start_year} AND {end_year}
             GROUP BY year
@@ -70,7 +66,7 @@ class FinancialCrisisAnalyzer:
                 AVG(sentiment_positive) as avg_positive_sentiment,
                 COUNT(*) as total_chunks,
                 SUM(CASE WHEN sentiment_negative > 0.7 THEN 1 ELSE 0 END) as high_negative_count
-            FROM `hackathon.{filing_type}`
+            FROM `your_filings_dataset.{filing_type}` # add your bigquery dataset name for filings
             WHERE bank = '{filing_bank_code}'
             AND year BETWEEN {start_year} AND {end_year}
             GROUP BY year, quarter
@@ -80,9 +76,7 @@ class FinancialCrisisAnalyzer:
         return self.client.query(query).to_dataframe()
 
     def find_risk_mentions(self, filing_type, bank_code, year=2008, quarter='Q1'):
-        """
-        find specific risk mentions in filings
-        """
+        
         filing_bank_code = 'boa' if bank_code == 'bac' else bank_code
 
         if filing_type == '10k':
@@ -91,7 +85,7 @@ class FinancialCrisisAnalyzer:
                 text_chunk,
                 sentiment_negative,
                 section
-            FROM `hackathon.{filing_type}`
+            FROM `your_filings_dataset.{filing_type}` # add your bigquery dataset name for filings
             WHERE bank = '{filing_bank_code}'
             AND year = {year}
             AND sentiment_negative > 0.7
@@ -104,7 +98,7 @@ class FinancialCrisisAnalyzer:
                 text_chunk,
                 sentiment_negative,
                 section
-            FROM `hackathon.{filing_type}`
+            FROM `your_filings_dataset.{filing_type}` # add your bigquery dataset name for filings
             WHERE bank = '{filing_bank_code}'
             AND year = {year}
             AND quarter = '{quarter}'
@@ -159,7 +153,7 @@ class FinancialCrisisAnalyzer:
                      ml_generate_text_result AS generated_insights
                   FROM
                       ML.GENERATE_TEXT(
-                      MODEL `hackathon-471014.crisis_analysis.anal`,
+                      MODEL `your-gcp-project-id.your_model_dataset.your_model_name`, # add your model dataset and model name
                       (SELECT @prompt_text AS prompt),
                       STRUCT(0.2 AS temperature, 8192 AS max_output_tokens, 0.8 AS top_p, 40 AS top_k)
                       )
@@ -305,12 +299,15 @@ def main():
     selected_bank_code = ""
     while True:
         choice = input(f"\nPlease enter the number of your choice (1-{len(bank_options)}): ")
-        selected_index = int(choice) - 1
-        if 0 <= selected_index < len(bank_options):
-            selected_bank_code, bank_name = bank_options[selected_index]
-            break
-        else:
-            print(f"Invalid number. Please enter a number between 1 and {len(bank_options)}.")
+        try:
+            selected_index = int(choice) - 1
+            if 0 <= selected_index < len(bank_options):
+                selected_bank_code, bank_name = bank_options[selected_index]
+                break
+            else:
+                print(f"Invalid number. Please enter a number between 1 and {len(bank_options)}.")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
 
 
     print(f"\nStarting analysis for {bank_name}...")
@@ -327,3 +324,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
