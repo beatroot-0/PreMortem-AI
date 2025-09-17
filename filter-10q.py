@@ -1,3 +1,5 @@
+!pip install logging PyGithub pdfplumber transformers torch numpy requests tqdm --quiet
+
 import os
 import re
 import logging
@@ -8,35 +10,37 @@ import numpy as np
 import pdfplumber
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from sentence_transformers import SentenceTransformer
+import github
+import requests
+import tempfile
+from tqdm import tqdm
 
 # --- configs ---
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
-INPUT_DIR = "all the pdfs from banks must lie in the same directory"
-OUTPUT_DIR = "output directory will process the embeddings in npy files and the jsonl files seperately into the same directory"
+GITHUB_TOKEN = "enter here the pat token"
+REPO_NAME = "github repo name where the 10q pdfs are"
+INPUT_FOLDER_ON_REPO = "10q"
+OUTPUT_FOLDER_ON_REPO = "jsonl"
+OUTPUT_FILENAME = "10q_analysis.jsonl"
 
 FINBERT_MODEL = "ProsusAI/finbert"
-EMBED_MODEL = "sentence-transformers/all-mpnet-base-v2"
-
 MAX_SEQ_LEN = 512
 CHAR_CHUNK_LEN = 1200
-MDA_MIN_CHARS = 800
 
-APOST = r"(?:'|\u2019|\x92)"
+APOST = r"(?:'|\u2025|\x92)"
 RE_PART_II = re.compile(r"\bPART\s+II\b", re.IGNORECASE)
 RE_ITEM2 = re.compile(r"\bItem\s*2\b", re.IGNORECASE)
 RE_MDA_CAPS = re.compile(r"\bMANAGEMENT" + APOST + r"S\s+DISCUSSION\s+AND\s+ANALYSIS\b", re.IGNORECASE)
 RE_QFS = re.compile(r"\bQuarterly\s+Financial\s+Summary\b", re.IGNORECASE)
 RE_LEGAL = re.compile(r"\bLegal\s+Notice\b", re.IGNORECASE)
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+#--- pdf extractor ---
 
-#--- parsing the pdf ---
-
-def parse_filename(pdf_path: str) -> Tuple[str, str, str]:
-    fn = os.path.basename(pdf_path)
+def parse_filename(pdf_filename: str) -> Tuple[str, str, str]:
+    fn = pdf_filename
     m = re.match(r"[Qq](\d)[-_](\d{4})[-_](.+)\.pdf$", fn)
     if m:
         quarter = f"Q{m.group(1)}"
@@ -55,7 +59,7 @@ def parse_filename(pdf_path: str) -> Tuple[str, str, str]:
         return company, quarter, year
     return Path(fn).stem.lower(), "Q?", "YYYY"
 
-# --- cleaning the pdf text extracted ---
+#--- text cleaner and 10q section extractor ---
 
 def clean_text(s: str) -> str:
     if not s:
@@ -69,9 +73,6 @@ def clean_text(s: str) -> str:
     return s.strip()
 
 def extract_page_texts(pdf_path: str) -> List[str]:
-    """
-    extracts a list of text strings, one for each page, using pdfplumber
-    """
     with pdfplumber.open(pdf_path) as pdf:
         return [page.extract_text() or "" for page in pdf.pages]
 
@@ -102,7 +103,7 @@ def extract_mda_text(pages: List[str], company: str, filename: str) -> str:
             end_pos = item3_match.start()
         return clean_text(full_text[start_pos:end_pos])
 
-#--- sentiment analyser & embedder & other stuffs ---
+# --- finbert model loader for sentiment analysis ---
 
 def _load_finbert():
     tok = AutoTokenizer.from_pretrained(FINBERT_MODEL)
@@ -151,30 +152,6 @@ def analyze_sentiment(text: str, tok, mdl, id2label: Dict[int, str]) -> Dict[str
     agg /= max(1, len(chunks))
     return {"positive": float(agg[0]), "negative": float(agg[1]), "neutral": float(agg[2])}
 
-def _build_embedder():
-    emb = SentenceTransformer(EMBED_MODEL)
-    logging.info(f"Embedding device: {emb._target_device}")
-    return emb
-
-def generate_embeddings(text: str, embedder) -> np.ndarray:
-    if not text:
-        return np.empty((0,), dtype=np.float32)
-    sents = re.split(r"(?<=[\.\!?])\s+|\n{2,}", text)
-    sents = [s.strip() for s in sents if s and len(s.strip()) > 2]
-    if not sents:
-        sents = [text]
-    vecs = embedder.encode(sents, batch_size=64, convert_to_numpy=True, normalize_embeddings=False)
-    return vecs
-
-def save_outputs(company: str, quarter: str, year: str, mda_embeddings: np.ndarray) -> str:
-    base = f"{company}_{quarter}_{year}"
-    emb_path = os.path.join(OUTPUT_DIR, f"{base}_mda_embeddings.npy")
-    if mda_embeddings.size:
-        np.save(emb_path, mda_embeddings)
-    else:
-        np.save(emb_path, np.empty((0,), dtype=np.float32))
-    return emb_path
-
 def get_dominant_sentiment(sentiment_scores: Dict[str, float]) -> str:
     return max(sentiment_scores, key=sentiment_scores.get)
 
@@ -201,98 +178,117 @@ def detect_sections_from_toc(full_text: str, toc_search_len: int = 8000) -> List
         sections.append((label, start, end))
     return sections
 
-# --- main functions ---
+# --- main ---
 
 def main() -> None:
     logging.info("Starting SEC 10-Q processing pipeline...")
     tok, mdl, id2label = _load_finbert()
-    embedder = _build_embedder()
-    master_rows: List[Dict[str, object]] = []
     row_id_counter = 1
-    pdf_files = [f for f in os.listdir(INPUT_DIR) if f.lower().endswith('.pdf')]
+    master_rows: List[Dict[str, object]] = []
+
+    auth = github.Auth.Token(GITHUB_TOKEN)
+    g = github.Github(auth=auth)
+    repo = g.get_repo(REPO_NAME)
+    logging.info(f"Connected to repo: {REPO_NAME}")
+
+    contents = repo.get_contents(INPUT_FOLDER_ON_REPO)
+    pdf_files = [content for content in contents if content.path.lower().endswith('.pdf')]
     if not pdf_files:
-        logging.error(f"No PDF files found in '{INPUT_DIR}'.")
+        logging.error(f"No PDF files found in '{INPUT_FOLDER_ON_REPO}' folder on the repo.")
         return
-    for fn in sorted(pdf_files):
-        pdf_path = os.path.join(INPUT_DIR, fn)
-        company, quarter, year = parse_filename(pdf_path)
-        logging.info(f"--- Processing file: {fn} ({company}, {quarter} {year}) ---")
-        pages = extract_page_texts(pdf_path)
-        if not pages:
-            continue
-        full_text = "\n".join(pages)
-        sections = detect_sections_from_toc(full_text)
-        if sections:
-            logging.info(f"Found TOC-based items for {fn}: {[s[0] for s in sections]}")
-            for sec_label, start_pos, end_pos in sections:
-                sec_text = clean_text(full_text[start_pos:end_pos])
-                if not sec_text:
-                    continue
-                s_sec = analyze_sentiment(sec_text, tok, mdl, id2label)
-                sec_embeddings = generate_embeddings(sec_text, embedder)
-                save_outputs(f"{company}_{sec_label}", quarter, year, sec_embeddings)
-                chunks = re.split(r"(?<=[\.\!?])\s+|\n{2,}", sec_text)
+    logging.info(f"Found {len(pdf_files)} PDF files in '{INPUT_FOLDER_ON_REPO}' folder.")
+
+    progress_bar = tqdm(pdf_files, desc="Processing GitHub files...")
+    for file_content_obj in progress_bar:
+        fn = file_content_obj.name
+        progress_bar.set_description(f"Processing {fn}")
+
+        company, quarter, year = parse_filename(fn)
+
+        temp_pdf_path = None
+        try:
+            download_url = file_content_obj.download_url
+            headers = {'Authorization': f'token {GITHUB_TOKEN}'}
+            response = requests.get(download_url, headers=headers)
+            response.raise_for_status()
+            file_bytes = response.content
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_f:
+                temp_pdf_path = temp_f.name
+                temp_f.write(file_bytes)
+
+            try:
+                pages = extract_page_texts(temp_pdf_path)
+            except Exception as e:
+                logging.error(f"Could not read PDF file {fn}. Error: {e}. Skipping.")
+                continue
+
+            if not pages:
+                continue
+
+            full_text = "\n".join(pages)
+            sections = detect_sections_from_toc(full_text)
+
+            if sections:
+                logging.info(f"Found TOC-based items for {fn}: {[s[0] for s in sections]}")
+                for sec_label, start_pos, end_pos in sections:
+                    sec_text = clean_text(full_text[start_pos:end_pos])
+                    if not sec_text:
+                        continue
+                    s_sec = analyze_sentiment(sec_text, tok, mdl, id2label)
+                    chunks = re.split(r"(?<=[\.\!?])\s+|\n{2,}", sec_text)
+                    chunks = [s.strip() for s in chunks if s and len(s.strip()) > 2]
+                    if not chunks:
+                        chunks = [sec_text]
+                    for idx, chunk in enumerate(chunks):
+                        master_rows.append({
+                            'row_id': row_id_counter, 'bank': company, 'year': int(year) if year.isdigit() else year,
+                            'quarter': quarter, 'filing_type': '10-Q', 'section': sec_label,
+                            'chunk_index': idx, 'dominant_sentiment': get_dominant_sentiment(s_sec),
+                            'sentiment_positive': s_sec['positive'], 'sentiment_negative': s_sec['negative'],
+                            'sentiment_neutral': s_sec['neutral'], 'text_chunk': chunk
+                        })
+                        row_id_counter += 1
+            else:
+                mda_text = extract_mda_text(pages, company, fn)
+                if not mda_text:
+                    logging.warning(f"MDA section not found in {fn}. Falling back to full document text.")
+                    mda_text = full_text
+                    section_label = 'full_text_fallback'
+                else:
+                    section_label = 'mda'
+                s_mda = analyze_sentiment(mda_text, tok, mdl, id2label)
+                chunks = re.split(r"(?<=[\.\!?])\s+|\n{2,}", mda_text)
                 chunks = [s.strip() for s in chunks if s and len(s.strip()) > 2]
                 if not chunks:
-                    chunks = [sec_text]
+                    chunks = [mda_text]
                 for idx, chunk in enumerate(chunks):
-                    emb_vec = sec_embeddings[idx].tolist() if sec_embeddings.size else []
                     master_rows.append({
-                        'row_id': row_id_counter,
-                        'bank': company,
-                        'year': int(year) if year.isdigit() else year,
-                        'quarter': quarter,
-                        'filing_type': '10-Q',
-                        'section': sec_label,
-                        'chunk_index': idx,
-                        'dominant_sentiment': get_dominant_sentiment(s_sec),
-                        'sentiment_positive': s_sec['positive'],
-                        'sentiment_negative': s_sec['negative'],
-                        'sentiment_neutral': s_sec['neutral'],
-                        'text_chunk': chunk,
-                        'embeddings': emb_vec
+                        'row_id': row_id_counter, 'bank': company, 'year': int(year) if year.isdigit() else year,
+                        'quarter': quarter, 'filing_type': '10-Q', 'section': section_label,
+                        'chunk_index': idx, 'dominant_sentiment': get_dominant_sentiment(s_mda),
+                        'sentiment_positive': s_mda['positive'], 'sentiment_negative': s_mda['negative'],
+                        'sentiment_neutral': s_mda['neutral'], 'text_chunk': chunk
                     })
                     row_id_counter += 1
-        else:
-            mda_text = extract_mda_text(pages, company, fn)
-            if not mda_text or len(mda_text) < MDA_MIN_CHARS:
-                logging.warning(f"MDA section not found or is too short in {fn}. Falling back to full document text.")
-                mda_text = full_text
-                section_label = 'full_text_fallback'
-            else:
-                section_label = 'mda'
-            s_mda = analyze_sentiment(mda_text, tok, mdl, id2label)
-            mda_embeddings = generate_embeddings(mda_text, embedder)
-            save_outputs(company, quarter, year, mda_embeddings)
-            chunks = re.split(r"(?<=[\.\!?])\s+|\n{2,}", mda_text)
-            chunks = [s.strip() for s in chunks if s and len(s.strip()) > 2]
-            if not chunks:
-                chunks = [mda_text]
-            for idx, chunk in enumerate(chunks):
-                emb_vec = mda_embeddings[idx].tolist() if mda_embeddings.size else []
-                master_rows.append({
-                    'row_id': row_id_counter,
-                    'bank': company,
-                    'year': int(year) if year.isdigit() else year,
-                    'quarter': quarter,
-                    'filing_type': '10-Q',
-                    'section': section_label,
-                    'chunk_index': idx,
-                    'dominant_sentiment': get_dominant_sentiment(s_mda),
-                    'sentiment_positive': s_mda['positive'],
-                    'sentiment_negative': s_mda['negative'],
-                    'sentiment_neutral': s_mda['neutral'],
-                    'text_chunk': chunk,
-                    'embeddings': emb_vec
-                })
-                row_id_counter += 1
+        finally:
+            if temp_pdf_path and os.path.exists(temp_pdf_path):
+                os.unlink(temp_pdf_path)
+
     if master_rows:
-        master_json_path = os.path.join(OUTPUT_DIR, 'master_10q_analysis.jsonl')
-        logging.info(f"Pipeline complete. Master JSONL saved to {master_json_path}")
-        with open(master_json_path, 'w', encoding='utf-8') as f:
-            json.dump(master_rows, f, indent=4)
-    else:
-        logging.warning("No valid sections were extracted. The output JSON file will not be created.")
+        output_path = f"{OUTPUT_FOLDER_ON_REPO}/{OUTPUT_FILENAME}"
+        output_content = "\n".join(json.dumps(record) for record in master_rows)
+
+        try:
+            file = repo.get_contents(output_path)
+            repo.update_file(file.path, "Update master 10-Q analysis", output_content, file.sha)
+            logging.info(f"Updated master analysis file at {output_path}")
+        except github.UnknownObjectException:
+            repo.create_file(output_path, "Create master 10-Q analysis", output_content)
+            logging.info(f"Created master analysis file at {output_path}")
+
+    logging.info("--- SEC 10-Q processing pipeline finished successfully! ---")
 
 if __name__ == '__main__':
     main()
+
