@@ -1,6 +1,11 @@
 # **PreMortem AI → SEC Filings + BigQuery**
 
-This NLP pipeline quantifies historical risk from SEC filings, creating a blueprint for a predictive, real-time market analysis engine.
+This NLP pipeline quantifies historical risk from SEC filings, creating a blueprint for a predictive, real-time market analysis engine all using Google's Big Query.
+
+<p>
+  <img width="300" height="500" alt="BQM" src="https://github.com/user-attachments/assets/99e7cbf2-6aa0-4707-ae5a-08e244c078fa" />
+  <img width="215" height="215" alt="image" align="right" src="https://github.com/user-attachments/assets/e81946fa-31dc-4af0-b125-37d8f88c12d8" />
+</p>
 
 # **PreMortem AI → SEC Filings + BigQuery — Focus: 2008 Financial Crisis (JPM, MS, GS, BAC)**
 This project targets the roots of the 2008 financial crisis. I focused on the 4 major U.S. banks that played central roles:
