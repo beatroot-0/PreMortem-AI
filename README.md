@@ -15,6 +15,10 @@ This project targets the roots of the 2008 financial crisis. I focused on the 4 
 * Goldman Sachs(GS)
 * Bank of America(BAC)
 
+  <p>
+    <img width="250" height="250" alt="image" src="https://github.com/user-attachments/assets/97629b8b-4a86-48d9-84f2-c4a2fb414d74" />
+  </p>
+
 My mission was to extract the language and signals inside their SEC 10-K and 10-Q filings from the pre-crisis and crisis years, measure tone and risk, and test whether those signals could have flagged trouble early. The goal is practical: if a similar micro- or macro-crisis were brewing today, could the same pipeline surface early warnings?
 
 ## Scope and Era
@@ -33,6 +37,9 @@ I collected 10-Ks and 10-Qs for JPM, MS, GS, and BAC covering roughly 2006–201
 
 ## Why These Banks and Why This Era
 These four banks are the pillars of modern financial plumbing they underwrite markets, provide short‑term funding, clear trades, and serve as major counterparties for governments, corporations, and households. The 2005–2010 window captures the arc from stability to collapse quiet increases in leverage and complex valuations in 2005–2006, growing liquidity caveats in 2007, and frank admissions of stress in 2008. Reading their filings side‑by‑side exposes a reproducible pattern recurring language about liquidity reliance, valuation uncertainty, and counterparty concentration that often precedes measurable market dislocations. That combination of institutions and years gives PreMortem AI a compact, high‑stakes testbed for separating routine corporate caution from signals of systemic fragility.
+
+<img width="500" height="900" alt="image" src="https://github.com/user-attachments/assets/9f33d721-ce63-4e45-8389-a4370da5cf44" />
+
 
 ## What I Did (Step by Step)
 * Collected the Filings: I gathered the SEC 10-K and 10-Q PDF filings from the SEC Edgar databases for the four target banks JPM, MS, GS, and BAC from the era of 2005-2010
